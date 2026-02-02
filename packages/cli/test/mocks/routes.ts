@@ -198,11 +198,9 @@ export function useAddRoute(options?: {
     }
 
     if (body.route.name.length > 256) {
-      res
-        .status(400)
-        .json({
-          error: { message: 'route.name must be 256 characters or less' },
-        });
+      res.status(400).json({
+        error: { message: 'route.name must be 256 characters or less' },
+      });
       return;
     }
 
