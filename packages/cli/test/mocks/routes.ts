@@ -165,7 +165,7 @@ export function useAddRoute(options?: {
     }
   );
 
-  // Mock the add route endpoint
+  // Mock the add route endpoint with validation
   client.scenario.post('/v1/projects/:projectId/routes', (req, res) => {
     const body = req.body as {
       route: {
@@ -185,6 +185,66 @@ export function useAddRoute(options?: {
       };
       position?: { placement: string; referenceId?: string };
     };
+
+    // Validate required fields
+    if (!body.route) {
+      res.status(400).json({ error: { message: 'route is required' } });
+      return;
+    }
+
+    if (!body.route.name) {
+      res.status(400).json({ error: { message: 'route.name is required' } });
+      return;
+    }
+
+    if (body.route.name.length > 256) {
+      res
+        .status(400)
+        .json({
+          error: { message: 'route.name must be 256 characters or less' },
+        });
+      return;
+    }
+
+    if (!body.route.route) {
+      res.status(400).json({ error: { message: 'route.route is required' } });
+      return;
+    }
+
+    if (!body.route.route.src) {
+      res
+        .status(400)
+        .json({ error: { message: 'route.route.src is required' } });
+      return;
+    }
+
+    if (body.route.description && body.route.description.length > 1024) {
+      res.status(400).json({
+        error: { message: 'route.description must be 1024 characters or less' },
+      });
+      return;
+    }
+
+    // Validate conditions limit
+    const hasCount = body.route.route.has?.length ?? 0;
+    const missingCount = body.route.route.missing?.length ?? 0;
+    if (hasCount + missingCount > 16) {
+      res.status(400).json({
+        error: { message: 'Maximum 16 conditions allowed (has + missing)' },
+      });
+      return;
+    }
+
+    // Validate position if provided
+    if (body.position) {
+      const { placement, referenceId } = body.position;
+      if ((placement === 'after' || placement === 'before') && !referenceId) {
+        res.status(400).json({
+          error: { message: `position.referenceId required for ${placement}` },
+        });
+        return;
+      }
+    }
 
     res.json({
       route: {
