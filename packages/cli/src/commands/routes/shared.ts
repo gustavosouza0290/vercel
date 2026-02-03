@@ -144,7 +144,7 @@ export function getPrimaryRouteType(route: RoutingRule): string | null {
     header: 'Header',
     rewrite: 'Rewrite',
     redirect: 'Redirect',
-    terminate: 'Terminate',
+    set_status: 'Set Status',
     transform: 'Transform',
   };
 
