@@ -1,3 +1,4 @@
+import chalk from 'chalk';
 import type Client from '../../util/client';
 import { parseArguments } from '../../util/get-args';
 import { getFlagsSpecification } from '../../util/get-flags-specification';
@@ -6,6 +7,7 @@ import { getLinkedProject } from '../../util/projects/link';
 import { getCommandName } from '../../util/pkg-name';
 import output from '../../output-manager';
 import type { Command } from '../help';
+import type { RoutingRule, RouteType } from '../../util/routes/types';
 
 export interface ParsedSubcommand {
   args: string[];
@@ -61,4 +63,86 @@ export async function confirmAction(
   }
 
   return await client.input.confirm(message, false);
+}
+
+export function validateRequiredArgs(
+  args: string[],
+  required: string[]
+): string | null {
+  for (let i = 0; i < required.length; i++) {
+    if (!args[i]) {
+      return `Missing required argument: ${required[i]}`;
+    }
+  }
+  return null;
+}
+
+/**
+ * Print a summary of route changes for diff display.
+ * Shows route name, type, and change action (added/deleted/modified/reordered).
+ */
+export function printDiffSummary(routes: RoutingRule[], maxDisplay = 10): void {
+  const displayRoutes = routes.slice(0, maxDisplay);
+
+  for (const route of displayRoutes) {
+    const symbol = getDiffSymbol(route);
+    const label = getDiffLabel(route);
+    const routeType = getPrimaryRouteType(route);
+
+    output.print(
+      `  ${symbol} ${route.name}${routeType ? ` ${chalk.gray(`(${routeType})`)}` : ''} ${chalk.gray(`- ${label}`)}\n`
+    );
+  }
+
+  if (routes.length > maxDisplay) {
+    output.print(
+      chalk.gray(`\n  ... and ${routes.length - maxDisplay} more changes\n`)
+    );
+  }
+}
+
+/**
+ * Get the colored symbol for a diff action.
+ */
+export function getDiffSymbol(route: RoutingRule): string {
+  if (route.action === '+') return chalk.green('+');
+  if (route.action === '-') return chalk.red('-');
+  return chalk.yellow('~');
+}
+
+/**
+ * Get the human-readable label for a diff action.
+ * Distinguishes between reordered and content-modified routes.
+ */
+export function getDiffLabel(route: RoutingRule): string {
+  if (route.action === '+') return 'Added';
+  if (route.action === '-') return 'Deleted';
+
+  // Check if it's a reorder vs content modification
+  const isReordered =
+    route.previousIndex !== undefined && route.newIndex !== undefined;
+
+  if (isReordered) {
+    return `Reordered (${route.previousIndex! + 1} → ${route.newIndex! + 1})`;
+  }
+
+  return 'Modified';
+}
+
+/**
+ * Get the primary route type label for display.
+ */
+export function getPrimaryRouteType(route: RoutingRule): string | null {
+  const types = route.routeTypes ?? [];
+  if (types.length === 0) return null;
+
+  const typeLabels: Record<RouteType, string> = {
+    header: 'Header',
+    rewrite: 'Rewrite',
+    redirect: 'Redirect',
+    terminate: 'Terminate',
+    transform: 'Transform',
+  };
+
+  return typeLabels[types[0]] ?? null;
 }
