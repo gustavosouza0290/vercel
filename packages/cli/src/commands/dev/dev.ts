@@ -1,5 +1,7 @@
 import chalk from 'chalk';
+import ms from 'ms';
 import { resolve, join } from 'path';
+import { execSync } from 'child_process';
 import fs from 'fs-extra';
 import type { ResolvedService } from '@vercel/fs-detectors';
 
@@ -11,6 +13,7 @@ import type { ProjectSettings } from '@vercel-internals/types';
 import setupAndLink from '../../util/link/setup-and-link';
 import { getCommandName } from '../../util/pkg-name';
 import param from '../../util/output/param';
+import cmd from '../../util/output/cmd';
 import { OUTPUT_DIR } from '../../util/build/write-build-result';
 import { pullEnvRecords } from '../../util/env/get-env-records';
 import output from '../../output-manager';
@@ -22,6 +25,8 @@ import {
   isExperimentalServicesEnabled,
 } from '../../util/projects/detect-services';
 import { displayDetectedServices } from '../../util/input/display-services';
+import { findProjectRoot } from '../../util/dev/find-project-root';
+import { acquireDevLock, releaseDevLock } from '../../util/dev/dev-lock';
 
 type Options = {
   '--listen': string;
@@ -37,6 +42,22 @@ export default async function dev(
   const [dir = '.'] = args;
   let cwd = resolve(dir);
   const listen = parseListen(opts['--listen'] || '3000');
+
+  // Find project root for multi-service projects
+  if (isExperimentalServicesEnabled()) {
+    const projectRoot = await findProjectRoot(cwd);
+
+    if (projectRoot && projectRoot !== cwd) {
+      // Check if root has services configuration (explicit or auto-detected)
+      const result = await tryDetectServices(projectRoot);
+
+      if (result && result.services.length > 0) {
+        // Has explicit experimentalServices OR auto-detected services layout
+        output.log(`Running from project root: ${chalk.cyan(projectRoot)}`);
+        cwd = projectRoot;
+      }
+    }
+  }
 
   // retrieve dev command
   let link = await getLinkedProject(client, cwd);
@@ -98,6 +119,31 @@ export default async function dev(
     }
   }
 
+  // Acquire lock for multi-service projects to prevent duplicate dev servers
+  let lockAcquired = false;
+  if (isExperimentalServicesEnabled() && services && services.length > 1) {
+    const port = typeof listen[0] === 'number' ? listen[0] : 0;
+    const lockResult = await acquireDevLock(cwd, port);
+
+    if (lockResult.acquired === false) {
+      const { existingLock } = lockResult;
+      output.error(
+        `Another ${getCommandName('dev')} instance is already running for this project.`
+      );
+      output.print(`  Port: ${chalk.cyan(existingLock.port)}\n`);
+      output.print(`  PID: ${chalk.cyan(existingLock.pid)}\n`);
+      output.print(
+        `  Started: ${chalk.cyan(ms(Date.now() - existingLock.startedAt))} ago\n`
+      );
+      output.log(
+        `To stop the existing instance, press Ctrl+C in its terminal or run: ` +
+          cmd(`kill ${existingLock.pid}`)
+      );
+      return 1;
+    }
+    lockAcquired = true;
+  }
+
   const devServer = new DevServer(cwd, {
     projectSettings,
     envValues,
@@ -132,12 +178,50 @@ export default async function dev(
     }
   });
 
-  // listen to SIGTERM for graceful shutdown
-  process.on('SIGTERM', () => {
+  // Graceful shutdown handler
+  let cleanupInProgress = false;
+  const cleanup = (signal: string) => {
+    if (cleanupInProgress) return;
+    cleanupInProgress = true;
+
+    output.debug(`Received ${signal}, shutting down...`);
+
     clearTimeout(timeout);
     controller.abort();
-    devServer.stop();
-  });
+
+    // Release lock immediately (sync) since devServer.stop() may call process.exit()
+    if (lockAcquired) {
+      releaseDevLock(cwd);
+    }
+
+    // Kill child processes first (devServer.stop() may call process.exit() before cleanup completes)
+    try {
+      execSync(`pkill -TERM -P ${process.pid}`, { stdio: 'ignore' });
+    } catch {
+      // Ignore errors
+    }
+
+    // Give children a moment to handle SIGTERM gracefully
+    setTimeout(() => {
+      // Force kill any remaining children
+      try {
+        execSync(`pkill -9 -P ${process.pid}`, { stdio: 'ignore' });
+      } catch {
+        // Ignore errors
+      }
+
+      // Now stop the dev server (cleans up other resources)
+      devServer
+        .stop()
+        .catch(() => {})
+        .finally(() => {
+          process.exit(0);
+        });
+    }, 2000);
+  };
+
+  process.on('SIGTERM', () => cleanup('SIGTERM'));
+  process.on('SIGINT', () => cleanup('SIGINT'));
 
   // If there is no Development Command, we must delete the
   // v3 Build Output because it will incorrectly be detected by
@@ -153,6 +237,9 @@ export default async function dev(
   try {
     await devServer.start(...listen);
   } finally {
+    // Note: Lock is released in cleanup() on SIGTERM/SIGINT, not here.
+    // devServer.start() returns after server is ready (doesn't block until shutdown),
+    // so this finally block runs during normal operation, not on shutdown.
     clearTimeout(timeout);
     controller.abort();
   }
