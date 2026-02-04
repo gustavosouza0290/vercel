@@ -11,6 +11,9 @@ import { dirname, join } from 'node:path';
 type ModuleType = typeof import('#wasm/vercel_python_analysis.js');
 type RootType = Awaited<ReturnType<ModuleType['instantiate']>>;
 
+const WASI_SHIM_PATH = '@bytecodealliance/preview2-shim/instantiation';
+const WASM_MODULE_PATH = '#wasm/vercel_python_analysis.js';
+
 let wasmInstance: RootType | null = null;
 let wasmLoadPromise: Promise<RootType> | null = null;
 
@@ -18,7 +21,7 @@ let wasmLoadPromise: Promise<RootType> | null = null;
 let wasmDir: string | null = null;
 function getWasmDir(): string {
   if (wasmDir === null) {
-    const wasmModulePath = require.resolve('#wasm/vercel_python_analysis.js');
+    const wasmModulePath = require.resolve(WASM_MODULE_PATH);
     wasmDir = dirname(wasmModulePath);
   }
   return wasmDir;
@@ -29,10 +32,6 @@ async function getCoreModule(path: string): Promise<WebAssembly.Module> {
   const wasmBytes = await readFile(wasmPath);
   return WebAssembly.compile(wasmBytes);
 }
-
-// Dynamic import paths stored in variables to avoid TypeScript module resolution errors
-const WASI_SHIM_PATH = '@bytecodealliance/preview2-shim/instantiation';
-const WASM_MODULE_PATH = '#wasm/vercel_python_analysis.js';
 
 export async function importWasmModule(): Promise<RootType> {
   if (wasmInstance) {
