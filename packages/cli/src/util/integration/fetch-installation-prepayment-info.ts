@@ -7,11 +7,8 @@ export async function fetchInstallationPrepaymentInfo(
   teamId: string,
   installationId: string
 ): Promise<InstallationBalancesAndThresholds> {
-  const searchParams = new URLSearchParams();
-  searchParams.set('teamId', teamId);
-
   return await client.fetch<InstallationBalancesAndThresholds>(
-    `/v1/integrations/installations/${installationId}/billing/balance?teamId=${searchParams}`,
+    `/v1/integrations/installations/${installationId}/billing/balance?teamId=${teamId}`,
     {
       json: true,
     }
