@@ -14,11 +14,18 @@ type RootType = Awaited<ReturnType<ModuleType['instantiate']>>;
 let wasmInstance: RootType | null = null;
 let wasmLoadPromise: Promise<RootType> | null = null;
 
-const wasmModulePath = require.resolve('#wasm/vercel_python_analysis.js');
-const wasmDir = dirname(wasmModulePath);
+// Lazily resolve WASM path to avoid module load-time errors when bundled
+let wasmDir: string | null = null;
+function getWasmDir(): string {
+  if (wasmDir === null) {
+    const wasmModulePath = require.resolve('#wasm/vercel_python_analysis.js');
+    wasmDir = dirname(wasmModulePath);
+  }
+  return wasmDir;
+}
 
 async function getCoreModule(path: string): Promise<WebAssembly.Module> {
-  const wasmPath = join(wasmDir, path);
+  const wasmPath = join(getWasmDir(), path);
   const wasmBytes = await readFile(wasmPath);
   return WebAssembly.compile(wasmBytes);
 }
